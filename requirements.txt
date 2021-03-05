@@ -1,2 +1,4 @@
 statsmodels
 altair
+ruamel.yaml
+fredapi
