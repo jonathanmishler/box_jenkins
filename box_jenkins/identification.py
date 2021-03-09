@@ -1,3 +1,4 @@
+from altair.vegalite.v4.schema.channels import Tooltip
 from statsmodels.tsa import stattools
 import numpy as np
 import pandas as pd
@@ -10,7 +11,7 @@ class Corr:
     def __init__(self, y, nlags: int = 24) -> None:
         self.y = y
         self.nlags = nlags
-        self.est_acf().est_pacf().est_qstat()
+        self.est_acf().est_pacf()
 
     @staticmethod
     def create_corr_df(
@@ -22,32 +23,29 @@ class Corr:
         """
         return pd.DataFrame(
             {
-                "lag": range(0, nlags + 1),
                 "values": values,
                 "ci_low": confint[:, 0] - values,
                 "ci_upp": confint[:, 1] - values,
-            }
+            },
+            index=range(0, nlags + 1),
         )
 
     def est_acf(self):
-        values, confint = stattools.acf(
-            x=self.y, nlags=self.nlags, fft=True, alpha=self.ALPHA
+        values, confint, qstat, pvalues = stattools.acf(
+            x=self.y, nlags=self.nlags, fft=True, alpha=self.ALPHA, qstat=True
         )
         self.acf_df = self.create_corr_df(values, confint, self.nlags)
+        self.qstat_df = pd.DataFrame(
+            {"values": qstat, "pvalues": pvalues}, 
+            index=range(1, self.nlags+1)
+        )
         return self
 
     def est_pacf(self):
         values, confint = stattools.pacf(
-            x=self.y, nlags=self.nlags, method="ywunbiased", alpha=self.ALPHA
+            x=self.y, nlags=self.nlags, method="ywadjusted", alpha=self.ALPHA
         )
         self.pacf_df = self.create_corr_df(values, confint, self.nlags)
-        return self
-
-    def est_qstat(self):
-        values, p_vaules = stattools.q_stat(self.y, self.y.shape[0])
-        self.qstat_df = pd.DataFrame(
-            {"lag": range(1, self.nlags), "values": values, "pvalues": p_vaules}
-        )
         return self
 
     @property
@@ -63,35 +61,37 @@ class Corr:
         return self.qstat_df
 
     def plot(self):
-        acf = (
-            self.bar(self.acf_df, "ACF")
-            + self.plot_ci(self.acf_df, "ci_low")
-            + self.plot_ci(self.acf_df, "ci_upp")
-        )
-        pacf = (
-            self.bar(self.pacf_df, "PACF")
-            + self.plot_ci(self.pacf_df, "ci_low")
-            + self.plot_ci(self.pacf_df, "ci_upp")
-        )
+        acf = self.combined_plot(self.acf_df[1:], "ACF")
+        pacf = self.combined_plot(self.pacf_df[1:], "PACF")
         return acf & pacf
+
+    def combined_plot(self, df: pd.DataFrame, name: str):
+        df = df.reset_index()
+        return (
+            self.plot_bar(df, name) + self.plot_ci(df, "ci_low") + self.plot_ci(df, "ci_upp")
+        )
 
     @staticmethod
     def plot_bar(df: pd.DataFrame, name: str) -> alt.vegalite.v4.api.Chart:
         plot = (
-            alt.Chart(df[1:])
+            alt.Chart(df)
             .mark_bar()
-            .encode(x=alt.X("lag:Q", title="Lag"), y=alt.Y("values:Q", title=name))
-            .interactive()
+            .encode(
+                x=alt.X("index:N", title="Lag"), 
+                y=alt.Y("values:Q", title=name),
+                tooltip = alt.Tooltip("values", format = ",.3f")
+            )
+            .properties(width=800, height=150)
         )
         return plot
 
     @staticmethod
     def plot_ci(df: pd.DataFrame, type: str) -> alt.vegalite.v4.api.Chart:
         plot = (
-            alt.Chart(self.df)
-            .mark_area(opacity=0.3, color="red", clip=True)
+            alt.Chart(df)
+            .mark_bar(opacity=0.3, color="red")
             .encode(
-                x=alt.X("lag:Q", scale=alt.Scale(domain=(1, self.nlags), zero=False)),
+                x=alt.X("index:N"),
                 y=f"{type}:Q",
             )
         )
